@@ -252,6 +252,9 @@ class SeedlinkPlotter(tkinter.Tk):
         # single traces of one id together.
         for tr in stream:
             tr.stats.processing = []
+            tr.filter('lowpass', freq=1.0, corners=2, zerophase=True)
+#             tr_filt = tr.copy()
+#             tr_filt.filter('lowpass', freq=1.0, corners=2, zerophase=True)
         stream.plot(fig=fig, method="fast", draw=False, equal_scale=False,
                     size=(self.args.x_size, self.args.y_size), title="",
                     color='Blue', tick_format=self.args.tick_format,
