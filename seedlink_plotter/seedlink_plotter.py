@@ -140,9 +140,6 @@ class SeedlinkPlotter(tkinter.Tk):
             # Regular colors: Black, Red, Blue, Green
             self.color = ('#000000', '#e50000', '#0000e5', '#448630')
 
-        self.counter_plot_lines = 0
-        self.counter_my_filter = 0
-
         self.plot_graph()
 
     def _quit(self, event):
@@ -166,36 +163,17 @@ class SeedlinkPlotter(tkinter.Tk):
         self.stop_time = now + 120
 
         with self.lock:
-            # print('with self.lock, line 195')   # this gets printed
             # leave some data left of our start for possible processing
-
             self.stream.trim(starttime=self.start_time - 120, nearest_sample=False)
-            # self.stream.trim(starttime=self.start_time - 900, nearest_sample=False)
             stream = self.stream.copy()
-            # print('stream = self.stream.copy()')
 
         try:
             logging.info(str(stream.split()))
             if not stream:
                 raise Exception("Empty stream for plotting")
 
-            # self.counter_my_filter += 1
-            # time_difference_seconds = self.stop_time - self.start_time # should be 22 minutes (1320 seconds)
-            # minutes, seconds = divmod(time_difference_seconds, 60)
-            # print('stream.traces[0].data: ', stream.traces[0].data) # this is how you can print the data for the selected trace index
-            # use tr.count() to show number of samples in that trace
-            # use stream.count() to show the number of traces in that stream
-            # for tr in stream:
-            #     print('{} LENGTH: {}'.format(tr, tr.count()))
-                # print('\n stop_time - start_time = time difference (in seconds):')
-                # print('\t   ', self.stop_time.strftime("%H:%M:%S.%f"))
-                # print('\t   ', self.start_time.strftime("%H:%M:%S.%f"))
-                # print('result: 00:{:0>2.0f}:{:0>4}'.format(minutes, seconds))
-            # print('\n counter_my_filter:', self.counter_my_filter)
-
             stream.merge(-1)
             for i in range(0, len(stream.traces)):
-                print(len(stream.traces[i].data))
                 window_len = len(stream.traces[i].data) // 2
                 window_len -= (window_len % 2)
                 if len(stream.traces[i].data) > window_len:
@@ -207,47 +185,34 @@ class SeedlinkPlotter(tkinter.Tk):
                     new = np.tile(1, hw_num)
                     hwp = np.append(hw, new)
                     stream.traces[i].data = stream.traces[i].data * hwp
-            print(len(stream.traces[0].data))
 
             stream.filter("lowpass", freq=0.1)
             stream.filter("highpass", freq=0.01)
 
-            print(len(stream.traces[0].data))
             for i in range(0, len(stream.traces)):
                 flat_len = int(len(stream.traces[i].data) / 3)
-                mean_val = np.mean(stream.traces[i].data[flat_len:]) # needs to take mean of everything after flat len
+                mean_val = np.mean(stream.traces[i].data[flat_len:]) # takes mean of everything after flat len
                 for j in range(flat_len):
                     stream.traces[i].data[j] = mean_val
-                # what if any of the arrays are zero? any corner cases?
 
-                # flat_start = np.zeros(len(stream.traces[i].data))
-                # for j in range(flat_len):
-                #     flat_start[j] = mean_val
-                # stream.traces[i].data[0:flat_len] = flat_start[0:flat_len]
             stream.trim(starttime=self.start_time, endtime=self.stop_time)
 
             self.plot_lines(stream)
 
         except Exception as e:
-            print('Exception, logging error')
             logging.error(e)
             pass
         self.after(int(self.args.update_time * 1000), self.plot_graph)
 
     def plot_lines(self, stream):
-        # print('def plot_lines(self, stream)')
-        self.counter_plot_lines += 1
-        print('\n self.counter_plot_lines:', self.counter_plot_lines, '\n')
         for id_ in self.ids:
             if not any([tr.id == id_ for tr in stream]):
-                # print('if not any([tr.id == id_ for tr in stream]):')   # this gets printed
                 net, sta, loc, cha = id_.split(".")
                 header = {'network': net, 'station': sta, 'location': loc,
                           'channel': cha, 'starttime': self.start_time}
                 data = np.zeros(2)
                 stream.append(Trace(data=data, header=header))
         stream.sort()
-        print('stream.sort')
         self.figure.clear()
         fig = self.figure
         # avoid the differing trace.processing attributes prohibiting to plot
@@ -319,7 +284,6 @@ class SeedlinkPlotter(tkinter.Tk):
             bbox["alpha"] = 0.6
         fig.text(0.99, 0.97, self.stop_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
                  ha="right", va="top", bbox=bbox, fontsize="medium")
-        # print('ydata:', ydata)
         fig.canvas.draw()
 
     def rgb_to_hex(self, red_value, green_value, blue_value):
@@ -354,15 +318,10 @@ class SeedlinkUpdater(SLClient):
         self.lock = lock
         self.args = myargs
 
-        self.counter_packet_handler = 0
-
     def packet_handler(self, count, slpack):
         """
         for compatibility with obspy 0.10.3 renaming
         """
-        # print('def packet_handler(self, count, slpack)')
-        # self.counter_packet_handler += 1
-        # print('self.counter_packet_handler:', self.counter_packet_handler, '\nstream:', self.stream, '\n')
         self.packetHandler(count, slpack)
 
     def packetHandler(self, count, slpack):
@@ -375,8 +334,6 @@ class SeedlinkUpdater(SLClient):
         :return: Boolean true if connection to SeedLink server should be
             closed and session terminated, false otherwise.
         """
-        # print('def packetHandler(self, count, slpack)')
-
         # check if not a complete packet
         if slpack is None or (slpack == SLPacket.SLNOPACKET) or \
                 (slpack == SLPacket.SLERROR):
@@ -404,7 +361,6 @@ class SeedlinkUpdater(SLClient):
 
         # new samples add to the main stream which is then trimmed
         with self.lock:
-            # print('with self.lock, line 420, this prints')
             self.stream += trace
             self.stream.merge(-1)
             for tr in self.stream:
@@ -416,13 +372,10 @@ class SeedlinkUpdater(SLClient):
         Return a list of SEED style Trace IDs that the SLClient is trying to
         fetch data for.
         """
-        print('def getTraceIDs(self)')
         ids = []
         if OBSPY_VERSION < [1, 0]:
-            print('if not else')
             streams = self.slconn.getStreams()
         else:
-            # print('if else, uses this one')  # this gets printed
             streams = self.slconn.get_streams()
         for stream in streams:
             net = stream.net
@@ -439,7 +392,6 @@ class SeedlinkUpdater(SLClient):
                 cha = selector[-3:]
                 ids.append(".".join((net, sta, loc, cha)))
         ids.sort()
-        print('\nids:', ids, '\n')
         return ids
 
 
@@ -465,7 +417,6 @@ def _parse_time_with_suffix_to_seconds(timestring):
         days.
     :rtype: float
     """
-    print('def _parse_time_with_suffix_to_seconds(timestring)')
     try:
         return float(timestring)
     except:
@@ -496,7 +447,6 @@ def _parse_time_with_suffix_to_minutes(timestring):
         days.
     :rtype: float
     """
-    print('def _parse_time_with_suffix_to_minutes(timestring)')
     try:
         return float(timestring)
     except:
@@ -505,7 +455,6 @@ def _parse_time_with_suffix_to_minutes(timestring):
 
 
 def main():
-    print('def main()')
     parser = ArgumentParser(prog='seedlink_plotter',
                             description='Plot a realtime seismogram of a station',
                             formatter_class=ArgumentDefaultsHelpFormatter)
@@ -590,7 +539,6 @@ def main():
                              'when opening a window without decoration')
     # parse the arguments
     args = parser.parse_args()
-    print('args: ', args)
 
     if args.verbose:
         loglevel = logging.DEBUG
@@ -617,28 +565,19 @@ def main():
     # cl is the seedlink client
     seedlink_client = SeedlinkUpdater(stream, myargs=args, lock=lock)
     if OBSPY_VERSION < [1, 0]:
-        print('here?')
         seedlink_client.slconn.setSLAddress(args.seedlink_server)
     else:
-        # print('or here? yes here!')
         seedlink_client.slconn.set_sl_address(args.seedlink_server)
     seedlink_client.multiselect = args.seedlink_streams
 
-    # if any([x in args.seedlink_streams for x in ", ?*"]) or args.line_plot:
-    #     print('LINE 604: if any([x in args.seedlink_streams for x in ", ?*"]) or args.line_plot')
     if args.time_tick_nb is None:
         args.time_tick_nb = 5
     if args.tick_format is None:
         args.tick_format = '%H:%M:%S'
     round_start = UTCDateTime(now.year, now.month, now.day, now.hour, 0, 0)
-    # round_start = round_start + 3600 - args.backtrace_time
-    # print('args.backtrace_time:', args.backtrace_time)
-    # print('round_start before:', round_start)
     round_start = round_start + 3600
-    # print('round_start after:', round_start, '\n')
     seedlink_client.begin_time = (round_start).format_seedlink()
 
-    # seedlink_client.begin_time = (now - args.backtrace_time).format_seedlink()
     seedlink_client.begin_time = (now - 3600).format_seedlink()
 
     seedlink_client.initialize()
@@ -651,7 +590,6 @@ def main():
     # Wait few seconds to get data for the first plot
     time.sleep(2)
 
-    # print('stop here please')
     master = SeedlinkPlotter(stream=stream, events=events, myargs=args,
                              lock=lock, trace_ids=ids)
 
