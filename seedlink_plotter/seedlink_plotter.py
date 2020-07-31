@@ -1,12 +1,20 @@
+#!/usr/bin/env python
 from __future__ import print_function
+
 import matplotlib
+import scipy
+from scipy import signal
+
+# Set the backend for matplotlib.
 matplotlib.use("TkAgg")
 matplotlib.rc('figure.subplot', hspace=0)
 matplotlib.rc('font', family="monospace")
 try:
-    import tkinter  #Py3
+    # Py3
+    import tkinter
 except ImportError:
-    import Tkinter as tkinter    # Py2
+    # Py2
+    import Tkinter as tkinter
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
@@ -25,12 +33,16 @@ import time
 import warnings
 import os
 import sys
+
 try:
-    from urllib.request import URLError   # Py3
+    # Py3
+    from urllib.request import URLError
 except ImportError:
-    from urllib2 import URLError   # Py2
+    # Py2
+    from urllib2 import URLError
 import logging
 import numpy as np
+
 # ugly but simple Python 2/3 compat
 if sys.version_info.major < 3:
     range_func = xrange
@@ -40,8 +52,11 @@ else:
     input_func = input
 
 OBSPY_VERSION = [int(x) for x in OBSPY_VERSION.split(".")[:2]]
-# check obspy version and warn if it's below 0.10.0, which means that a memory leak is present in the used seedlink client (unless working on some master
-# branch version after obspy/obspy@5ce975c3710ca, which is impossible to check reliably). see #7 and obspy/obspy#918. imports depend on the obspy version
+# check obspy version and warn if it's below 0.10.0, which means that a memory
+# leak is present in the used seedlink client (unless working on some master
+# branch version after obspy/obspy@5ce975c3710ca, which is impossible to check
+# reliably). see #7 and obspy/obspy#918.
+# imports depend of the obspy version
 if OBSPY_VERSION < [0, 10]:
     warning_msg = (
         "ObsPy version < 0.10.0 has a memory leak in SeedLink Client. "
@@ -49,6 +64,7 @@ if OBSPY_VERSION < [0, 10]:
         "the memory leak (see "
         "https://github.com/bonaime/seedlink_plotter/issues/7).")
     warnings.warn(warning_msg)
+# Check if OBSPY_VERSION < 0.11
 if OBSPY_VERSION < [0, 11]:
     # 0.10.x
     from obspy.seedlink.slpacket import SLPacket
@@ -59,28 +75,40 @@ else:
     from obspy.clients.seedlink.slpacket import SLPacket
     from obspy.clients.seedlink import SLClient
     from obspy.clients.fdsn import Client
+
+# Compatibility checks
+# UTCDateTime
 try:
     UTCDateTime.format_seedlink
 except AttributeError:
-    # create the new format_seedlink fonction using the old formatSeedLink method
+    # create the new format_seedlink fonction using the old formatSeedLink
+    # method
     def format_seedlink(self):
         return self.formatSeedLink()
+
+
     # add the function in the class
     setattr(UTCDateTime, 'format_seedlink', format_seedlink)
+# SLPacket
 try:
     SLPacket.get_type
 except AttributeError:
     # create the new get_type fonction using the old getType method
     def get_type(self):
         return self.getType()
+
+
     # add the function in the class
     setattr(SLPacket, 'get_type', get_type)
+
 try:
     SLPacket.get_trace
 except AttributeError:
     # create the new get_trace fonction using the old getTrace method
     def get_trace(self):
         return self.getTrace()
+
+
     # add the function in the class
     setattr(SLPacket, 'get_trace', get_trace)
 
@@ -91,7 +119,7 @@ class SeedlinkPlotter(tkinter.Tk):
     """
 
     def __init__(self, stream=None, events=None, myargs=None, lock=None,
-                 trace_ids=None, *args, **kwargs):
+                 drum_plot=True, trace_ids=None, *args, **kwargs):
         tkinter.Tk.__init__(self, *args, **kwargs)
         favicon = tkinter.PhotoImage(
             file=os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -129,7 +157,10 @@ class SeedlinkPlotter(tkinter.Tk):
         self.args = args
         self.stream = stream
         self.events = events
+        self.drum_plot = drum_plot
         self.ids = trace_ids
+        self.threshold = args.threshold
+        self.lookback = args.lookback
 
         # Colors
         if args.rainbow:
@@ -157,14 +188,13 @@ class SeedlinkPlotter(tkinter.Tk):
 
     def plot_graph(self):
         now = UTCDateTime()
-        # self.start_time = now - self.backtrace
-        self.start_time = now - 1200
-        # self.stop_time = now
-        self.stop_time = now + 120
+        self.start_time = now - self.backtrace
+        self.stop_time = now
 
         with self.lock:
             # leave some data left of our start for possible processing
-            self.stream.trim(starttime=self.start_time - 120, nearest_sample=False)
+            self.stream.trim(
+                starttime=self.start_time - self.args.backtrace_time, nearest_sample=False)
             stream = self.stream.copy()
 
         try:
@@ -174,37 +204,57 @@ class SeedlinkPlotter(tkinter.Tk):
 
             stream.merge(-1)
             for i in range(0, len(stream.traces)):
+                flat_len = int(len(stream.traces[i].data) / 3) # Make first third of data the mean value to removethe startup transient
                 window_len = len(stream.traces[i].data) // 2
-                window_len -= (window_len % 2)
+                window_len -= (window_len % 2) # Make sure window length is an even number
                 if len(stream.traces[i].data) > window_len:
-                    hw = np.hanning(window_len)
+                    hw = np.hanning(window_len) # Hanning window size of window length
                     hw = np.split(hw, 2)
                     hw = hw[0]
-                    hw_num = len(stream.traces[i].data) - window_len / 2
+                    hw_num = len(stream.traces[i].data) - window_len / 2 # Only first half of hanning window, don't want
+                    # the right side of the data to be impacted (only care about the most receent n seconds of data)
                     hw_num = int(hw_num)
-                    new = np.tile(1, hw_num)
+                    new = np.tile(1, hw_num) # Make everything after the hanning window one, don't want most recent n
+                                            # seconds to be impacted
                     hwp = np.append(hw, new)
-                    stream.traces[i].data = stream.traces[i].data * hwp
+                    stream.traces[i].data = stream.traces[i].data * hwp # Apply window
 
             stream.filter("lowpass", freq=0.1)
             stream.filter("highpass", freq=0.01)
 
+            threshold = self.threshold # 200 nm/s normally, can be changed in the parameters
+            index_list = []
             for i in range(0, len(stream.traces)):
-                flat_len = int(len(stream.traces[i].data) / 3)
-                mean_val = np.mean(stream.traces[i].data[flat_len:]) # takes mean of everything after flat len
+                looking = int(stream.traces[i].stats.sampling_rate * self.lookback) # How far back to look for
+                # earthquakes, any earthquakes above the threshold within this time will trigger the warning
+                if looking > len(stream.traces[i].data):
+                    raise ValueError("Lookback too far, not enough data")
+                flat_len = int(len(stream.traces[i].data) / 3) # Length of flattening (1st third by default)
+                mean_val = np.mean(stream.traces[i].data[len(stream.traces[i].data) // 2:]) # Get the mean value
+                flat_start = np.zeros(len(stream.traces[i].data)) # Make the array
                 for j in range(flat_len):
-                    stream.traces[i].data[j] = mean_val
-
+                    flat_start[j] = mean_val # Make array the mean value instead of 0 to keep the intereface from zooming in too far
+                # [flat_start[i] = mean_val for i in range(flat_len)]
+                stream.traces[i].data[0:flat_len] = flat_start[0:flat_len]
+                counter = 0
+                for j in range(-1, -int(looking), -1):
+                    if stream.traces[i].data[j] > threshold:
+                        counter += 1
+                        index_list.append(stream.traces[i]) #If threshold is surpassed within the lookback time,
+                        #put the trace ID in a list to pass to the plot_lines function
+                        if counter == 1:
+                            print("WARNING: MAX THRESHOLD VALUE SURPASSED")
             stream.trim(starttime=self.start_time, endtime=self.stop_time)
-
-            self.plot_lines(stream)
+            np.set_printoptions(threshold=np.inf)
+            self.plot_lines(stream, index_list)
 
         except Exception as e:
             logging.error(e)
-            pass
+            raise e
+
         self.after(int(self.args.update_time * 1000), self.plot_graph)
 
-    def plot_lines(self, stream):
+    def plot_lines(self, stream, index_list):
         for id_ in self.ids:
             if not any([tr.id == id_ for tr in stream]):
                 net, sta, loc, cha = id_.split(".")
@@ -272,9 +322,8 @@ class SeedlinkPlotter(tkinter.Tk):
                 # a line with either 2 or 4 zeros (2 if dummy line is cut off
                 # at left edge of time axis)
                 if len(ydata) in [4, 2] and not ydata.any():
-                    plt.setp(ylabels, visible=False)
                     if MATPLOTLIB_VERSION[0] >= 2:
-                        ax.set_facecolor("#ff6666")
+                        ax.set_facecolor("k") #Traces with no data turn black
                     else:
                         ax.set_axis_bgcolor("#ff6666")
         if OBSPY_VERSION >= [0, 10]:
@@ -284,6 +333,13 @@ class SeedlinkPlotter(tkinter.Tk):
             bbox["alpha"] = 0.6
         fig.text(0.99, 0.97, self.stop_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
                  ha="right", va="top", bbox=bbox, fontsize="medium")
+        for i in index_list:
+            count = 0
+            for j in stream:
+                if i == j:
+                    fig.axes[count].set_facecolor('r') #Plots that surpass the threshold within the lookback time
+                                                        #turn red
+                count += 1
         fig.canvas.draw()
 
     def rgb_to_hex(self, red_value, green_value, blue_value):
@@ -334,6 +390,7 @@ class SeedlinkUpdater(SLClient):
         :return: Boolean true if connection to SeedLink server should be
             closed and session terminated, false otherwise.
         """
+
         # check if not a complete packet
         if slpack is None or (slpack == SLPacket.SLNOPACKET) or \
                 (slpack == SLPacket.SLERROR):
@@ -426,27 +483,6 @@ def _parse_time_with_suffix_to_seconds(timestring):
 
 
 def _parse_time_with_suffix_to_minutes(timestring):
-    """
-    Parse a string to minutes as float.
-
-    If string can be directly converted to a float it is interpreted as
-    minutes. Otherwise the following suffixes can be appended, case
-    insensitive: "s" for seconds, "m" for minutes, "h" for hours, "d" for days.
-
-    >>> _parse_time_with_suffix_to_minutes("12.6")
-    12.6
-    >>> _parse_time_with_suffix_to_minutes("12.6s")
-    0.21
-    >>> _parse_time_with_suffix_to_minutes("12.6m")
-    12.6
-    >>> _parse_time_with_suffix_to_minutes("12.6h")
-    756.0
-
-    :type timestring: str
-    :param timestring: "s" for seconds, "m" for minutes, "h" for hours, "d" for
-        days.
-    :rtype: float
-    """
     try:
         return float(timestring)
     except:
@@ -478,14 +514,11 @@ def main():
              ' The following suffixes can be used as well: "s" for seconds, '
              '"m" for minutes, "h" for hours and "d" for days.',
         default=60)
-
-    # try changing this argument?
     parser.add_argument('-b', '--backtrace_time',
                         help='the number of seconds to plot (3600=1h,86400=24h). The '
                              'following suffixes can be used as well: "m" for minutes, '
                              '"h" for hours and "d" for days.', required=True,
                         type=_parse_time_with_suffix_to_seconds)
-
     parser.add_argument('--x_position', type=int,
                         help='the x position of the graph', required=False, default=0)
     parser.add_argument('--y_position', type=int,
@@ -502,6 +535,12 @@ def main():
         '--tick_format', type=str, help='the tick format of time legend ', required=False, default=None)
     parser.add_argument(
         '--time_tick_nb', type=int, help='the number of time tick', required=False)
+
+    parser.add_argument(
+        '--threshold', type=int, help='maximum ground speed', required=True)
+    parser.add_argument(
+        '--lookback', type=int, help='how far back IN SECONDS (integer) the plotter checks for earthquakes', required=True)
+
     parser.add_argument(
         '--without-decoration', required=False, action='store_true',
         help=('the graph window will have no decorations. that means the '
@@ -570,15 +609,18 @@ def main():
         seedlink_client.slconn.set_sl_address(args.seedlink_server)
     seedlink_client.multiselect = args.seedlink_streams
 
-    if args.time_tick_nb is None:
-        args.time_tick_nb = 5
-    if args.tick_format is None:
-        args.tick_format = '%H:%M:%S'
-    round_start = UTCDateTime(now.year, now.month, now.day, now.hour, 0, 0)
-    round_start = round_start + 3600
-    seedlink_client.begin_time = (round_start).format_seedlink()
+    # tes if drum plot or line plot
+    if any([x in args.seedlink_streams for x in ", ?*"]) or args.line_plot:
+        drum_plot = False
+        if args.time_tick_nb is None:
+            args.time_tick_nb = 5
+        if args.tick_format is None:
+            args.tick_format = '%H:%M:%S'
+        round_start = UTCDateTime(now.year, now.month, now.day, now.hour, 0, 0)
+        round_start = round_start + 3600 - args.backtrace_time
+        seedlink_client.begin_time = (round_start).format_seedlink()
 
-    seedlink_client.begin_time = (now - 3600).format_seedlink()
+    seedlink_client.begin_time = (now - args.backtrace_time).format_seedlink()
 
     seedlink_client.initialize()
     ids = seedlink_client.getTraceIDs()
@@ -591,8 +633,8 @@ def main():
     time.sleep(2)
 
     master = SeedlinkPlotter(stream=stream, events=events, myargs=args,
-                             lock=lock, trace_ids=ids)
-
+                             lock=lock, drum_plot=drum_plot,
+                             trace_ids=ids)
     master.mainloop()
 
 
