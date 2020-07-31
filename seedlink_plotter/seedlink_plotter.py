@@ -250,7 +250,7 @@ class SeedlinkPlotter(tkinter.Tk):
 
         except Exception as e:
             logging.error(e)
-            raise e
+            pass
 
         self.after(int(self.args.update_time * 1000), self.plot_graph)
 
