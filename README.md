@@ -1,15 +1,15 @@
 
 The original code has been edited so that it
 
-    only does line plots (no drum plot),
+ only does line plots (no drum plot),
     
-    has a  lowpass and highpass filter,
+ has a  lowpass and highpass filter,
     
-    has two more arguments that must be included for it to run,
+ has two more arguments that must be included for it to run,
     
-    turns red when data exceeds threshold value,
+ turns red when data exceeds threshold value,
     
-    station turns black when producing unusable data.
+ station turns black when producing unusable data.
 
 
 
